@@ -15,8 +15,8 @@
     
     <!-- Başlık / Header -->
     <div class="text-center space-y-2">
-      <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi</h1>
-      <p class="text-slate-400 text-sm">Excel dosyanızı yükleyin, numaraları hızlıca listeleyip kopyalayın.</p>
+      <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi (Akıllı Ayıklayıcı)</h1>
+      <p class="text-slate-400 text-sm">Karışık form verilerinden isim ve telefon numaralarını otomatik ayıklar.</p>
     </div>
 
     <!-- Dosya Yükleme Alanı -->
@@ -67,70 +67,120 @@
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
         
-        // İlk sayfayı al
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // JSON formatına dönüştür
-        const rawJson = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        // Tüm tabloyu ham dizi olarak al
+        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
-        processExcelData(rawJson);
+        processChaosData(rawRows);
       };
       reader.readAsArrayBuffer(file);
     }
 
-    function processExcelData(data) {
+    function processChaosData(rows) {
       parsedData = [];
+      if (rows.length === 0) return;
 
-      data.forEach(row => {
-        let name = '';
-        let phone = '';
+      // 1. Satırdan itibaren tüm hücreleri tarayacağız (0. satır başlık)
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
 
-        // Sütun isimlerinde arama yap ve değerleri eşleştir
-        Object.keys(row).forEach(key => {
-          const lowerKey = key.toLowerCase();
-          const val = String(row[key]).trim();
+        // Formun ana sütunundaki genel ismi de yedek olarak alalım (örn: "Adınız Soyadınız" kolonu genelde 2. indistedir)
+        let fallbackName = String(row[2] || '').trim();
 
-          // İsim / Soyisim tespiti
-          if (lowerKey.includes('ad') || lowerKey.includes('isim') || lowerKey.includes('name')) {
-            name = name ? `${name} ${val}` : val;
-          } 
-          // Telefon tespiti
-          else if (lowerKey.includes('tel') || lowerKey.includes('gsm') || lowerKey.includes('phone') || lowerKey.includes('numara')) {
-            phone = val;
+        // Satırdaki tüm hücreleri incele (özellikle kalabalık form metin bloklarını içeren sütunları)
+        row.forEach(cellVal => {
+          let text = String(cellVal || '').trim();
+          if (!text) return;
+
+          // Metin içindeki telefon numarası kalıplarını yakala (örn: 05309757328, 0537 434 12 15, +90 543...)
+          // Karmaşık metinlerde alt alta birden fazla kişi olabileceği için satırı bölerek veya regex ile arıyoruz.
+          
+          // Önce satırı olası kişi bloklarına ayıralım (bazen tire veya yeni satırla ayrılır)
+          // Veya direkt regex ile metin bloğundan telefonları ve isimleri çekelim.
+          
+          // Daha akıllı yaklaşım: Metni satırlara veya anlamlı parçalara böl
+          let chunks = text.split(/[\r\n]+/);
+          chunks.forEach(chunk => {
+            extractPersonAndPhone(chunk, fallbackName);
+          });
+
+          // Eğer chunk'lara bölünmediyse ama tek hücre içinde birden fazla veri varsa, 
+          // genel bir telefon araması yapıp etrafındaki ismi yakalayalım.
+          if (chunks.length <= 1) {
+            extractPersonAndPhone(text, fallbackName);
           }
         });
+      }
 
-        // Eğer başlıkla eşleşmeyen yapı varsa hücre değerlerine göre telefon bulmayı dene
-        if (!phone) {
-          Object.values(row).forEach(val => {
-            const cleanVal = String(val).replace(/\s+/g, '');
-            // En az 10 haneli rakam içeren hücreyi tel kabul et
-            if (/^\+?\d{10,14}$/.test(cleanVal)) {
-              phone = String(val);
-            }
-          });
+      // Benzersiz numaraları filtrele (Aynı kişi mükerrer eklenmesin)
+      const uniqueMap = new Map();
+      parsedData.forEach(item => {
+        // Telefon numarasındaki tüm boşluk ve karakterleri temizleyip eşsiz anahtar yapalım
+        let cleanKey = item.phone.replace(/\D/g, '');
+        // Son 10 hanesini baz alalım ki başındaki 0 veya +90 farkı sorun yaratmasın
+        if (cleanKey.length >= 10) {
+          cleanKey = cleanKey.slice(-10);
         }
-
-        // Eğer isim hala bulunamadıysa ilk hücreyi isim al
-        if (!name) {
-          const keys = Object.keys(row);
-          if (keys.length > 0) name = String(row[keys[0]]);
-        }
-
-        if (phone) {
-          parsedData.push({
-            id: Math.random().toString(36).substr(2, 9),
-            name: name || 'İsimsiz Kayıt',
-            phone: phone,
-            copied: false
-          });
+        if (!uniqueMap.has(cleanKey)) {
+          uniqueMap.set(cleanKey, item);
         }
       });
+
+      parsedData = Array.from(uniqueMap.values());
 
       controls.classList.remove('hidden');
       controls.classList.add('flex');
       renderList(parsedData);
+    }
+
+    function extractPersonAndPhone(text, fallbackName) {
+      // Türkiye telefon formatı regex'i (05xx veya 5xx ile başlayan 10-11 haneli yapılar)
+      // Boşluklu veya tireli hallerini de yakalar (örn: 0537 434 12 15)
+      const phoneRegex = /(?:(?:\+|00)90|0)?\s*5\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/g;
+      
+      let match;
+      while ((match = phoneRegex.exec(text)) !== null) {
+        let phoneStr = match[0].trim();
+        
+        // Telefon numarasından önceki kısmı isim olarak tahmin etmeye çalışalım
+        let index = match.index;
+        let prefixText = text.substring(0, index).trim();
+        
+        // Öndeki metinden TC kimlik numarasını (11 haneli sayı) ve gereksiz kalıntıları temizle
+        prefixText = prefixText.replace(/\b\d{11}\b/g, ''); // 11 haneli TC'leri sil
+        prefixText = prefixText.replace(/[\/\-\,\.\:]/g, ' ').trim(); // Noktalama işaretlerini sil
+        
+        // Son kalan kelimeler genelde ad soyad ve yakınlık derecesidir (örn: "Ömer Faruk Öztürk Eşi")
+        let words = prefixText.split(/\s+/).filter(w => w.length > 0);
+        
+        // Son kelime "Kendi", "Eşi", "Çocuk", "Anne" gibi yakınlık derecesiyse onu isimden ayıklayabiliriz
+        let relationWords = ['kendi', 'kendisi', 'eşi', 'eş', 'çocuk', 'anne', 'baba', 'kardeş', 'kızım', 'oğlum', 'bebek', 'dost'];
+        if (words.length > 0 && relationWords.includes(words[words.length - 1].toLowerCase())) {
+          words.pop(); // Yakınlık kelimesini at
+        }
+
+        let nameStr = words.join(' ');
+        
+        // Eğer isim çok kısa veya boş kaldıysa satırın genel ismini (fallbackName) kullan
+        if (!nameStr || nameStr.length < 2) {
+          nameStr = fallbackName || 'İsimsiz Katılımcı';
+        }
+
+        // Listeye ekle
+        parsedData.push({
+          id: 'id_' + Math.random().toString(36).substr(2, 9),
+          name: capitalCase(nameStr),
+          phone: phoneStr,
+          copied: false
+        });
+      }
+    }
+
+    function capitalCase(str) {
+      return str.toLowerCase().replace(/(^|\s)\S/g, l => l.toUpperCase());
     }
 
     function renderList(items) {
@@ -138,7 +188,7 @@
       totalCountEl.textContent = items.length;
 
       if (items.length === 0) {
-        phoneList.innerHTML = `<div class="text-center py-8 text-slate-500">Gösterilecek numara bulunamadı.</div>`;
+        phoneList.innerHTML = `<div class="text-center py-8 text-slate-500">Geçerli telefon numarası bulunamadı.</div>`;
         return;
       }
 
@@ -146,7 +196,6 @@
         const card = document.createElement('div');
         card.className = "flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700 hover:border-slate-600 transition-all";
 
-        // Buton renkleri ve durum tespiti
         const btnBg = item.copied 
           ? "bg-rose-600 hover:bg-rose-700 text-white" 
           : "bg-emerald-600 hover:bg-emerald-500 text-white";
@@ -166,13 +215,11 @@
     }
 
     function copyPhone(id, phone) {
-      // Panoya kopyala
       navigator.clipboard.writeText(phone).then(() => {
-        // Durumu güncelle
         const targetIndex = parsedData.findIndex(item => item.id === id);
         if (targetIndex !== -1) {
           parsedData[targetIndex].copied = true;
-          filterList(); // Mevcut filtreyle yeniden çiz
+          filterList();
         }
       }).catch(err => {
         console.error('Kopyalama hatası:', err);
