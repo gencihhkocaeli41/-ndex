@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Excel Telefon Numarası Ayıklayıcı</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS CDN (Excel Okumak İçin) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen py-8 px-4 font-sans">
+
+  <div class="max-w-3xl mx-auto space-y-6">
+    
+    <!-- Başlık / Header -->
+    <div class="text-center space-y-2">
+      <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi</h1>
+      <p class="text-slate-400 text-sm">Excel dosyanızı yükleyin, numaraları hızlıca listeleyip kopyalayın.</p>
+    </div>
+
+    <!-- Dosya Yükleme Alanı -->
+    <div class="bg-slate-800 border-2 border-dashed border-slate-600 rounded-xl p-6 text-center hover:border-emerald-500 transition-colors cursor-pointer relative" id="drop-zone">
+      <input type="file" id="excel-file" accept=".xlsx, .xls" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+      <div class="space-y-2 pointer-events-none">
+        <svg class="w-10 h-10 mx-auto text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+        </svg>
+        <p class="text-slate-200 font-medium">Excel dosyanızı buraya sürükleyin veya <span class="text-emerald-400 underline">seçin</span></p>
+        <p class="text-xs text-slate-400">.XLSX veya .XLS formatı desteklenir</p>
+      </div>
+    </div>
+
+    <!-- Arama ve Bilgi Barı (Varsayılan Gizli) -->
+    <div id="controls" class="hidden flex-col sm:flex-row gap-4 items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
+      <input type="text" id="search-input" placeholder="İsim veya numara ara..." class="w-full sm:w-72 bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-emerald-500 text-slate-100" />
+      <div class="text-xs text-slate-400 font-mono">
+        Toplam Kayıt: <span id="total-count" class="text-emerald-400 font-bold">0</span>
+      </div>
+    </div>
+
+    <!-- Numara Listesi -->
+    <div id="phone-list" class="space-y-3">
+      <!-- Dinamik olarak doldurulacak -->
+    </div>
+
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('excel-file');
+    const phoneList = document.getElementById('phone-list');
+    const controls = document.getElementById('controls');
+    const searchInput = document.getElementById('search-input');
+    const totalCountEl = document.getElementById('total-count');
+
+    let parsedData = [];
+
+    fileInput.addEventListener('change', handleFile);
+    searchInput.addEventListener('input', filterList);
+
+    function handleFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        // İlk sayfayı al
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // JSON formatına dönüştür
+        const rawJson = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        
+        processExcelData(rawJson);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function processExcelData(data) {
+      parsedData = [];
+
+      data.forEach(row => {
+        let name = '';
+        let phone = '';
+
+        // Sütun isimlerinde arama yap ve değerleri eşleştir
+        Object.keys(row).forEach(key => {
+          const lowerKey = key.toLowerCase();
+          const val = String(row[key]).trim();
+
+          // İsim / Soyisim tespiti
+          if (lowerKey.includes('ad') || lowerKey.includes('isim') || lowerKey.includes('name')) {
+            name = name ? `${name} ${val}` : val;
+          } 
+          // Telefon tespiti
+          else if (lowerKey.includes('tel') || lowerKey.includes('gsm') || lowerKey.includes('phone') || lowerKey.includes('numara')) {
+            phone = val;
+          }
+        });
+
+        // Eğer başlıkla eşleşmeyen yapı varsa hücre değerlerine göre telefon bulmayı dene
+        if (!phone) {
+          Object.values(row).forEach(val => {
+            const cleanVal = String(val).replace(/\s+/g, '');
+            // En az 10 haneli rakam içeren hücreyi tel kabul et
+            if (/^\+?\d{10,14}$/.test(cleanVal)) {
+              phone = String(val);
+            }
+          });
+        }
+
+        // Eğer isim hala bulunamadıysa ilk hücreyi isim al
+        if (!name) {
+          const keys = Object.keys(row);
+          if (keys.length > 0) name = String(row[keys[0]]);
+        }
+
+        if (phone) {
+          parsedData.push({
+            id: Math.random().toString(36).substr(2, 9),
+            name: name || 'İsimsiz Kayıt',
+            phone: phone,
+            copied: false
+          });
+        }
+      });
+
+      controls.classList.remove('hidden');
+      controls.classList.add('flex');
+      renderList(parsedData);
+    }
+
+    function renderList(items) {
+      phoneList.innerHTML = '';
+      totalCountEl.textContent = items.length;
+
+      if (items.length === 0) {
+        phoneList.innerHTML = `<div class="text-center py-8 text-slate-500">Gösterilecek numara bulunamadı.</div>`;
+        return;
+      }
+
+      items.forEach(item => {
+        const card = document.createElement('div');
+        card.className = "flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700 hover:border-slate-600 transition-all";
+
+        // Buton renkleri ve durum tespiti
+        const btnBg = item.copied 
+          ? "bg-rose-600 hover:bg-rose-700 text-white" 
+          : "bg-emerald-600 hover:bg-emerald-500 text-white";
+        const btnText = item.copied ? "Kopyalandı" : "Kopyala";
+
+        card.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+            <span class="font-semibold text-slate-100 text-base">${escapeHtml(item.name)}</span>
+            <span class="font-mono text-emerald-400 text-sm bg-slate-900/60 px-2.5 py-1 rounded-md border border-slate-700/50">${escapeHtml(item.phone)}</span>
+          </div>
+          <button onclick="copyPhone('${item.id}', '${escapeHtml(item.phone)}')" class="px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all transform active:scale-95 flex items-center gap-1.5 ${btnBg}">
+            ${btnText}
+          </button>
+        `;
+        phoneList.appendChild(card);
+      });
+    }
+
+    function copyPhone(id, phone) {
+      // Panoya kopyala
+      navigator.clipboard.writeText(phone).then(() => {
+        // Durumu güncelle
+        const targetIndex = parsedData.findIndex(item => item.id === id);
+        if (targetIndex !== -1) {
+          parsedData[targetIndex].copied = true;
+          filterList(); // Mevcut filtreyle yeniden çiz
+        }
+      }).catch(err => {
+        console.error('Kopyalama hatası:', err);
+      });
+    }
+
+    function filterList() {
+      const query = searchInput.value.toLowerCase();
+      const filtered = parsedData.filter(item => 
+        item.name.toLowerCase().includes(query) || 
+        item.phone.toLowerCase().includes(query)
+      );
+      renderList(filtered);
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>
