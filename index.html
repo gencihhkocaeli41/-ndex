@@ -16,7 +16,7 @@
     <!-- Başlık / Header -->
     <div class="text-center space-y-2">
       <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi</h1>
-      <p class="text-slate-400 text-sm">Excel satır sırasıyla birebir eşleşen telefon listesi.</p>
+      <p class="text-slate-400 text-sm">Ortak numaralar dahil tüm katılımcıları eksiksiz listeler.</p>
     </div>
 
     <!-- Dosya Yükleme Alanı -->
@@ -72,26 +72,23 @@
         
         const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
-        parseExcelStrict(rawRows);
+        parseAllRecords(rawRows);
       };
       reader.readAsArrayBuffer(file);
     }
 
-    function parseExcelStrict(rows) {
+    function parseAllRecords(rows) {
       parsedData = [];
       if (rows.length === 0) return;
 
-      // 0. satırdan son satıra kadar tüm Excel satırlarını tek tek geziyoruz
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
 
-        // Satır içindeki hücrelerde telefon numarası veya metin kalıbı arayalım
         row.forEach(cellVal => {
           let text = String(cellVal || '').trim();
           if (!text) return;
 
-          // Esnek telefon yakalama kalıbı (Boşluklu, tireli veya düz numaralar)
           const phoneRegex = /(?:(?:\+|00)90|0)?\s*5\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/g;
           
           let match;
@@ -99,7 +96,6 @@
             let phoneStr = match[0].trim();
             let prefixText = text.substring(0, match.index).trim();
             
-            // Temizlik
             prefixText = prefixText.replace(/[\/\-\,\.\:\;]+$/, '').trim();
             prefixText = prefixText.replace(/^[\/\-\,\.\:\;]+/, '').trim();
 
@@ -109,9 +105,9 @@
             }
 
             if (phoneStr) {
+              // Hiçbir mükerrer/aynı numara filtresi uygulanmıyor, herkes tek tek ekleniyor
               parsedData.push({
                 id: 'id_' + Math.random().toString(36).substr(2, 9),
-                rowNumber: i + 1, // Excel'deki orijinal satır numarası
                 name: capitalCase(nameStr),
                 phone: phoneStr,
                 copied: false
@@ -120,18 +116,6 @@
           }
         });
       }
-
-      // Mükerrer (aynı) numaraları teke düşürürken Excel sırasını bozmayalım
-      const uniqueMap = new Map();
-      parsedData.forEach(item => {
-        let cleanKey = item.phone.replace(/\D/g, '');
-        if (cleanKey.length >= 10) cleanKey = cleanKey.slice(-10);
-        if (!uniqueMap.has(cleanKey)) {
-          uniqueMap.set(cleanKey, item);
-        }
-      });
-
-      parsedData = Array.from(uniqueMap.values());
 
       controls.classList.remove('hidden');
       controls.classList.add('flex');
@@ -162,9 +146,9 @@
 
         card.innerHTML = `
           <div class="flex items-center gap-3 sm:gap-4 overflow-hidden">
-            <!-- Excel'deki Orijinal Satır Numarası (Örn: 54) -->
-            <span class="flex-shrink-0 w-8 h-8 rounded-lg bg-slate-700 text-emerald-400 font-mono text-xs sm:text-sm font-bold flex items-center justify-center border border-slate-600">
-              ${item.rowNumber}
+            <!-- Standart Sıralı Liste Numarası (1, 2, 3...) -->
+            <span class="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-700 text-slate-300 font-mono text-xs sm:text-sm font-bold flex items-center justify-center border border-slate-600">
+              ${index + 1}
             </span>
 
             <!-- Kişi Bilgisi -->
