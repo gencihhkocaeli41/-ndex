@@ -15,8 +15,8 @@
     
     <!-- Başlık / Header -->
     <div class="text-center space-y-2">
-      <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi (Akıllı Ayıklayıcı)</h1>
-      <p class="text-slate-400 text-sm">Karışık form verilerinden isim ve telefon numaralarını otomatik ayıklar.</p>
+      <h1 class="text-3xl font-bold text-emerald-400">Excel Telefon Listesi</h1>
+      <p class="text-slate-400 text-sm">Tek kutucuktaki isim ve telefonları anında ayıklar.</p>
     </div>
 
     <!-- Dosya Yükleme Alanı -->
@@ -41,7 +41,7 @@
 
     <!-- Numara Listesi -->
     <div id="phone-list" class="space-y-3">
-      <!-- Dinamik olarak doldurulacak -->
+      <!-- Dinamik doldurulacak -->
     </div>
 
   </div>
@@ -70,60 +70,63 @@
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // Tüm tabloyu ham dizi olarak al
         const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
-        processChaosData(rawRows);
+        parseSingleCellData(rawRows);
       };
       reader.readAsArrayBuffer(file);
     }
 
-    function processChaosData(rows) {
+    function parseSingleCellData(rows) {
       parsedData = [];
       if (rows.length === 0) return;
 
-      // 1. Satırdan itibaren tüm hücreleri tarayacağız (0. satır başlık)
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         if (!row || row.length === 0) continue;
 
-        // Formun ana sütunundaki genel ismi de yedek olarak alalım (örn: "Adınız Soyadınız" kolonu genelde 2. indistedir)
-        let fallbackName = String(row[2] || '').trim();
-
-        // Satırdaki tüm hücreleri incele (özellikle kalabalık form metin bloklarını içeren sütunları)
         row.forEach(cellVal => {
           let text = String(cellVal || '').trim();
           if (!text) return;
 
-          // Metin içindeki telefon numarası kalıplarını yakala (örn: 05309757328, 0537 434 12 15, +90 543...)
-          // Karmaşık metinlerde alt alta birden fazla kişi olabileceği için satırı bölerek veya regex ile arıyoruz.
+          // Metin içindeki tüm telefon numaralarını yakala
+          const phoneRegex = /(?:(?:\+|00)90|0)?\s*5\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/g;
           
-          // Önce satırı olası kişi bloklarına ayıralım (bazen tire veya yeni satırla ayrılır)
-          // Veya direkt regex ile metin bloğundan telefonları ve isimleri çekelim.
-          
-          // Daha akıllı yaklaşım: Metni satırlara veya anlamlı parçalara böl
-          let chunks = text.split(/[\r\n]+/);
-          chunks.forEach(chunk => {
-            extractPersonAndPhone(chunk, fallbackName);
-          });
+          let match;
+          while ((match = phoneRegex.exec(text)) !== null) {
+            let phoneStr = match[0].trim();
+            
+            // Telefon numarasından sol tarafta kalan kısmı al (İsim kısmı)
+            let prefixText = text.substring(0, match.index).trim();
+            
+            // Gereksiz tire, çizgi veya kalıntıları temizle
+            prefixText = prefixText.replace(/[\/\-\,\.\:\;]+$/, '').trim();
+            prefixText = prefixText.replace(/^[\/\-\,\.\:\;]+/, '').trim();
 
-          // Eğer chunk'lara bölünmediyse ama tek hücre içinde birden fazla veri varsa, 
-          // genel bir telefon araması yapıp etrafındaki ismi yakalayalım.
-          if (chunks.length <= 1) {
-            extractPersonAndPhone(text, fallbackName);
+            let nameStr = prefixText;
+
+            // Eğer sol tarafta isim kalmadıysa ya da çok kısaysa
+            if (!nameStr || nameStr.length < 2) {
+              nameStr = `Kayıt #${i}`;
+            }
+
+            if (phoneStr) {
+              parsedData.push({
+                id: 'id_' + Math.random().toString(36).substr(2, 9),
+                name: capitalCase(nameStr),
+                phone: phoneStr,
+                copied: false
+              });
+            }
           }
         });
       }
 
-      // Benzersiz numaraları filtrele (Aynı kişi mükerrer eklenmesin)
+      // Mükerrer (aynı) numaraları teke düşür
       const uniqueMap = new Map();
       parsedData.forEach(item => {
-        // Telefon numarasındaki tüm boşluk ve karakterleri temizleyip eşsiz anahtar yapalım
         let cleanKey = item.phone.replace(/\D/g, '');
-        // Son 10 hanesini baz alalım ki başındaki 0 veya +90 farkı sorun yaratmasın
-        if (cleanKey.length >= 10) {
-          cleanKey = cleanKey.slice(-10);
-        }
+        if (cleanKey.length >= 10) cleanKey = cleanKey.slice(-10);
         if (!uniqueMap.has(cleanKey)) {
           uniqueMap.set(cleanKey, item);
         }
@@ -134,49 +137,6 @@
       controls.classList.remove('hidden');
       controls.classList.add('flex');
       renderList(parsedData);
-    }
-
-    function extractPersonAndPhone(text, fallbackName) {
-      // Türkiye telefon formatı regex'i (05xx veya 5xx ile başlayan 10-11 haneli yapılar)
-      // Boşluklu veya tireli hallerini de yakalar (örn: 0537 434 12 15)
-      const phoneRegex = /(?:(?:\+|00)90|0)?\s*5\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/g;
-      
-      let match;
-      while ((match = phoneRegex.exec(text)) !== null) {
-        let phoneStr = match[0].trim();
-        
-        // Telefon numarasından önceki kısmı isim olarak tahmin etmeye çalışalım
-        let index = match.index;
-        let prefixText = text.substring(0, index).trim();
-        
-        // Öndeki metinden TC kimlik numarasını (11 haneli sayı) ve gereksiz kalıntıları temizle
-        prefixText = prefixText.replace(/\b\d{11}\b/g, ''); // 11 haneli TC'leri sil
-        prefixText = prefixText.replace(/[\/\-\,\.\:]/g, ' ').trim(); // Noktalama işaretlerini sil
-        
-        // Son kalan kelimeler genelde ad soyad ve yakınlık derecesidir (örn: "Ömer Faruk Öztürk Eşi")
-        let words = prefixText.split(/\s+/).filter(w => w.length > 0);
-        
-        // Son kelime "Kendi", "Eşi", "Çocuk", "Anne" gibi yakınlık derecesiyse onu isimden ayıklayabiliriz
-        let relationWords = ['kendi', 'kendisi', 'eşi', 'eş', 'çocuk', 'anne', 'baba', 'kardeş', 'kızım', 'oğlum', 'bebek', 'dost'];
-        if (words.length > 0 && relationWords.includes(words[words.length - 1].toLowerCase())) {
-          words.pop(); // Yakınlık kelimesini at
-        }
-
-        let nameStr = words.join(' ');
-        
-        // Eğer isim çok kısa veya boş kaldıysa satırın genel ismini (fallbackName) kullan
-        if (!nameStr || nameStr.length < 2) {
-          nameStr = fallbackName || 'İsimsiz Katılımcı';
-        }
-
-        // Listeye ekle
-        parsedData.push({
-          id: 'id_' + Math.random().toString(36).substr(2, 9),
-          name: capitalCase(nameStr),
-          phone: phoneStr,
-          copied: false
-        });
-      }
     }
 
     function capitalCase(str) {
